@@ -1,0 +1,69 @@
+= OVERVIEW
+
+The Nagios Shell (ngsh) provides a CLI interface to work with the Nagios daemon. It provides querying
+capabilities about the running configuration, as well a start/stop/restart/reload actions (currently
+slanted towards Solaris SMF). Its querying capabilities Mathias Kettner's excellent [MK Livestatus](http://mathias-kettner.de/checkmk_livestatus.html)
+Nagios module.
+
+= REQUIREMENTS
+
+* [MK Livestatus](http://mathias-kettner.de/checkmk_livestatus.html)
+* Python
+
+= SYNOPSIS
+
+ngsh [options] <action> [<arguments>]
+
+where actions are one of:
+
+  * start: start Nagios daemon
+  * stop: stop Nagios daemon
+  * restart: restart Nagios daemon (full restart)
+  * reload|hup: reload Nagios configuration (w/out restart)
+  * status: outputs Nagios status acording to SMF
+  * pid: outputs pid of Nagios daemon
+  * reap: reaps Nagios Plugins defunct processes
+  * find: find hosts and/or services
+  * query: query attributes about a service (all hosts), host (all services) or service/host pair
+  * list: list hosts, services or servicegroups
+  * enable: enable notifications
+  * disable: disable notifications
+
+and options include:
+
+  * -d: debug mode
+  * -n: dry-run mode
+  * -v: verbose mode
+  * -f pipe|row: query results output format
+
+= CONFIGURATION
+
+There is currently no configuration file for ngsh. Edit ngsh and ngsq to specify the location of the LQL socket.
+
+= EXAMPLES
+
+== Status
+
+root@nagios:~# ngsh status
+STATE STIME FMRI
+online 22:50:08 svc:/application/monitoring/nagios:default
+
+== Finding Hosts and/or Services
+
+root@nagios:~# ngsh find snap
+host:snap0.example.com
+host:snapmirror0.example.com
+service:service/snapbaby/client:daily
+service:service/snapbaby/client:hourly
+service:snapmirror
+
+== Query
+
+root@nagios:~# ngsh query filerstats
+subzero0.example.com;0;OK;1
+subzero1.example.com;0;OK;1
+subzero2.example.com;0;OK;1
+subzero3.example.com;0;OK;1
+
+root@nagios:~# ngsh query service critical
+hadoop0;hadoop/worker;2
