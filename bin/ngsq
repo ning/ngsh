@@ -1,0 +1,92 @@
+#!/usr/local/bin/python
+#
+# nagiosq
+
+import string,sys,re,getopt,time,subprocess,socket
+
+ME = "nagiosq"
+stderr = sys.stderr
+stdout = sys.stdout
+
+## variable initialization
+NAGIOS_LQL = "/local/var/run/nagios/rw/nagios.lql"
+
+def cliargopts():
+
+   # initialize
+   optflags = {'debug':False,'nop':False,'socket':NAGIOS_LQL,'hostname':None,'service':None,'format':'pipe'}
+   filer = None
+
+   # parse cli options
+   try:
+      opts,args = getopt.getopt(sys.argv[1:],"dhH:S:",["debug","nop","help","socket","format="])
+      for opt,optarg in opts:
+         if opt in ["--debug","-d"]:
+            optflags['debug'] = True
+         elif opt == "--nop":
+            optflags['nop'] = True
+         elif opt == "-H":
+            optflags['hostname'] = optarg
+         elif opt == "-S":
+            optflags['service'] = optarg
+         elif opt in ["--format"]:
+            if optarg in ['pipe','row']:
+               optflags['format'] = optarg
+            else:
+               stderr.write("%s: error: invalid output format: %s\n" % (ME,optarg))
+               sys.exit(1)
+         elif opt == "--socket":
+            optflags['socket'] = optarg
+         elif opt in ["--help","-h"]:
+            stderr.write("%s [-h|--help] [--debug] [--nop] <action> [<args>]\n" % (ME))
+            sys.exit(0)
+         else:
+            stderr.write("%s: error: invalid option %s\n" % (ME,opt))
+            sys.exit(1)
+   except getopt.error,s:
+      stderr.write("%s: error: %s\n" % (ME,s))
+      sys.exit(1)
+
+   return(optflags)
+
+
+if (__name__=="__main__"):
+   
+## read cli options
+   (optflags) = cliargopts()
+
+   queries = { "host_status" : "GET hosts\nColumns: host_name alias address last_check notifications_enabled num_services services state\nColumnHeaders: on\nFilter: host_name ~~ %s\n" % (optflags['hostname']),
+               "service_status" : "GET services\nColumns: service_description host_name state notes plugin_output notifications_enabled\nColumnHeaders: on\nFilter: service_description ~~ %s\n" % (optflags['service']),
+               "service_host_status" : "GET services\nColumns: service_description host_name state plugin_output notifications_enabled\nColumnHeaders: on\nFilter: service_description ~~ %s\nFilter: host_name ~~ %s\n" % (optflags['service'],optflags['hostname']) }
+
+   if optflags['service'] and optflags['hostname']:
+      query = queries['service_host_status']
+   elif optflags['service']:
+      query = queries['service_status']
+   elif optflags['hostname']:
+      query = queries['host_status']
+   else:
+      stderr.write("%s: error: invalid query.\n" % (ME))
+      sys.exit(1)
+
+   try:
+      s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+      s.connect(optflags['socket'])
+      s.send(query)
+      s.shutdown(socket.SHUT_WR)
+      answer = s.recv(100000000)
+      table = [ line.split(';') for line in answer.split('\n')[:-1] ]
+      if len(table) <= 1:
+         sys.exit(1)
+      headers = table[0]
+      data = table[1:]
+      if optflags['format'] == 'row':
+         for bit in data:
+            for x, y in zip(table[0], bit):
+               stdout.write("%s: %s\n" % (x,y))
+            print "---"
+      elif optflags['format'] == 'pipe':
+         for bit in data:
+             stdout.write("%s\n" % (string.join(bit,';')))
+   except socket.error,e:
+      stderr.write("%s: error: unable to open livestatus socket: %s\n" % (ME,e[1]))

@@ -1,0 +1,356 @@
+#!/bin/bash
+#
+# Nagios Shell
+#
+#     Version: 1.0
+#        Date: 01-19-2011
+# Description: CLI interface to Nagios via Live Status
+#     History:
+#              1.0 - Initial release
+# ===============================================================================================================
+
+## Basic
+   declare -rx ME=${0##*/}
+   declare -rx VERSION="1.0"
+   declare -rx FMRI="monitoring/nagios"
+
+## varible init
+
+   declare -rx NAGIOS_FQB=$(svcprop -p nagiosctl/NAGIOS_FQB $FMRI 2>/dev/null)
+   declare -rx NAGIOS_BIN=$(basename $NAGIOS_FQB)
+   declare -rx NAGIOS_CFG=$(svcprop -p nagiosctl/NAGIOS_CFG $FMRI 2>/dev/null)
+   declare -rx NAGIOS_LQL=$(svcprop -p nagiosctl/NAGIOS_LQL $FMRI 2>/dev/null)
+   declare -rx NAGIOS_CMD=$(svcprop -p nagiosctl/NAGIOS_CMD $FMRI 2>/dev/null)
+   declare -rx NAGIOS_LOG=$(svcprop -p nagiosctl/NAGIOS_LOG $FMRI 2>/dev/null)
+
+   declare -rx NAGIOSQ="ngsq"
+
+   dbg=''          # debug flag
+   verbose=''      # verbose flag
+   irc=''
+   action=''       # action directing nagiosh's work
+   format='pipe'
+   YES='YES'
+   xnenv='xno'
+
+   lql_dir="/local/etc/nagios/lql"
+
+   [ -z "$MYHN" ] && _MYHN=`hostname` || _MYHN=$MYHN
+
+## functions
+
+   function errorAction {
+      echo "$ME: error: $1 failed: $2" >&2
+      [ "$YES" ] && logger -p local7.error -t $ME "error: $2"
+      [ ! -z "$3" ] && svcs -xv $FMRI >&2 && echo "   See: $NAGIOS_LOG" >&2
+      exit 1
+   }
+   
+   function logAction {
+      # send all messages to syslog
+      # send stuff to stdout whenever verbose is on and it's not a dry-run
+      msg=$1
+      irc=$2
+      if [ "$YES" ]; then
+         logger -p local7.info -t $ME "$msg"
+      fi
+      [ "$verbose" ] && echo "$ME: info: $msg"
+      return 0
+   }
+
+   function execLQL {
+      /bin/printf "$1" | unixcat $NAGIOS_LQL 2>/dev/null && return 0 || return 1
+   }
+   
+   function execCMD {
+      local cmd=''
+      local args=''
+
+      [ -z "$1" ] && return 1
+      
+      cmd="[$(esec)] $1" ; shift
+      [ ! -z "$*" ] && IFS=";" && cmd="${cmd};${*}"
+      
+      if /bin/printf "$cmd\n" >&11 2>/dev/null; then
+         unset IFS
+         logAction "command $cmd executed" 
+         return 0
+      else
+         unset IFS
+         return 1
+      fi
+   }
+
+   function usage {
+cat <<End-of-Usage
+$ME: usage: $ME [<options>] <action> [<args>]
+  <options>: -d: enable debug mode
+             -e: XN environment (xno, dsp/xno, etc)
+             -v: enable verbose mode
+             -f: format mode: pipe or row
+             -n: enable dry-run mode
+             -h: help
+   <action>: start: starts Nagios
+             stop: stops Nagios
+             reload: reloads Nagios configuration
+             status: prints SMF status of Nagios service
+             pid: prints pid of Nagios daemon
+             verify: verifies Nagios configuration
+             find: locates a host, service or servicegroup
+             list hosts|services|servicegroups: lists hosts, services or servicegroups known to Nagios
+             query <args>: queries the running Nagios process
+             enable notification <host>|<service>|all: enables notification for host, service, or service,host pair
+             disable notification <host>|<service>|all: disables notification for host, service, or service,host pair
+             gen[erate] <corespec>: generates Nagios configuration for <corespec>
+             reap: reaps zombie nagios plugin processes
+     <args>: notification: prints the status of notifications (system-wide)
+             notification disabled: prints status of service,host pairs notifications
+See https://home.ninginc.com/display/OPS/Nagios+Shell for detailed information.
+End-of-Usage
+   }
+   
+
+## process cli options and arguments
+   opt=''
+   OPTIND=1
+   OPTARG=''
+   while getopts ":de:f:hnvVY" opt; do
+      case $opt in
+         d) dbg=1
+            ;;
+         e) xnenv=$OPTARG
+            ;;
+         f) format=$OPTARG
+            ;;
+         h) usage
+            exit 0
+            ;;
+         n) YES=''
+            ;;
+         v) verbose=1
+            ;;
+         V) printf "$VERSION\n"
+            exit 0
+            ;;
+         Y) YES="YES"
+            ;;
+         *) echo "$ME: error: invalid command line arguments"
+            exit 3
+            ;;
+      esac
+   done
+
+   shift $(($OPTIND - 1))                  # dump cli options
+   numargs="$#"
+      
+## argument sanity and setup
+   if [ "$numargs" -lt 1 ]; then
+      usage
+      exit 0
+   else
+      action=$1 && shift && [ "$dbg" ] && echo "$ME: debug: action is $action" >&2
+      case "$action" in
+         start)  ;;
+         stop)   ;;
+         verify) ;;
+         *)      [ -z  "$NAGIOS_LQL" -o ! -w  "$NAGIOS_LQL" ] && echo "$ME: error: unable to open Nagios LQL pipe" >&2 && exit 50
+                 [ -z  "$NAGIOS_CMD" -o ! -w  "$NAGIOS_CMD" ] && echo "$ME: error: unable to open Nagios CMD pipe" >&2 && exit 50
+                 exec 11>$NAGIOS_CMD
+                 ;;
+      esac
+   fi
+   [ -z "$YES" ] && exec 11>&1
+
+## do work
+   case $action in
+         
+      start)      if [ "$YES" ]; then
+                     if svcadm enable -s $FMRI > /dev/null 2>&1; then
+                        [ "$verbose" ] && svcs $FMRI
+                     else
+                        svcadm clear $FMRI > /dev/null 2>&1
+                        if svcadm enable -s $FMRI > /dev/null 2>&1; then
+                           [ "$verbose" ] && svcs $FMRI
+                        else
+                           errorAction $action "svcadm reports failure on enable"
+                        fi
+                     fi
+                     logAction "Nagios $action on $_MYHN" irc
+                  fi
+                  ;;
+                        
+      stop)       if [ "$YES" ]; then
+                     svcadm disable $FMRI
+                     sleep 2
+                     [ "$verbose" ] && svcs $FMRI
+                     logAction "Nagios $action on $_MYHN" irc
+                  fi
+                  ;;
+                        
+      pid)        execLQL "GET status\nColumns: nagios_pid\n" && exit 0 || echo "error: unable to exec LQL query" >&2 && exit 1
+                  ;;
+
+      reap)       ps -eo pid,user,args | egrep 'nagios.*defunct' | egrep -v 'grep' | awk '{print $1}' | xargs -n1 preap
+                  ;;
+                        
+      reload|hup) pid=$(execLQL "GET status\nColumns: nagios_pid\n")
+                  if [ -z "$pid" ]; then
+                     errorAction $action "unable to find nagios PID"
+                     exit 1
+                  else
+                     kill -HUP "$pid"
+                  fi
+                  [ "$verbose" ] && verboseinfo "configuration reloaded"
+                  logAction "Nagios $action on $_MYHN" "irc"
+                  ;;
+                        
+      verify)     [ "$verbose" ] && $NAGIOS_FQB -v $NAGIOS_CFG || $NAGIOS_FQB -v $NAGIOS_CFG >/dev/null 2>&1
+                  ;;
+                  
+      status)     svcs $FMRI
+                  ;;
+                  
+      list)       if [ "$#" -eq 1 ]; then
+                     case "$1" in
+                        hosts)         execLQL "GET hosts\nColumns: host_name\n" | sort
+                                       ;;
+                        services)      execLQL "GET services\nColumns: service_description\n" | sort | uniq
+                                       ;;
+                        servicegroups) execLQL "GET servicegroups\nColumns: name\n"
+                                       ;;
+                     esac
+                  else
+                     errorAction $action "invalid number of arguments: list <hosts|services|servicegroups>"
+                  fi
+                  ;;
+
+      find)       if [ "$#" -eq 1 ]; then
+                     execLQL "GET hosts\nColumns: host_name\nFilter: host_name ~ $1\n" | sort | sed -e 's/^/host:/'
+                     execLQL "GET services\nColumns: service_description\nFilter: service_description ~ $1\n" | sort | uniq | sed -e 's/^/service:/'
+                     execLQL "GET servicegroups\nColumns: name\nFilter: name ~ $1\n" | sort | uniq | sed -e 's/^/servicegroup:/'
+                  else
+                     errorAction $action "invalid number of arguments: find <regex>"
+                  fi
+                  ;;
+
+
+      query)   if [ $# -eq 0 ]; then
+                  svcs $FMRI
+               else
+                  object=$1
+                  shift
+                  case $object in
+                     notification) case "$#" in
+                                    0) [ $(execLQL "GET status\nColumns: enable_notifications\n") == "1" ] && echo "Notifications are ENABLED" || echo "Notifications are DISABLED"
+                                       ;;
+                                    1) case $1 in
+                                          disabled)   execLQL "GET services\nColumns: host_name service_description\nFilter: notifications_enabled = 0\n"
+                                                      ;;
+                                       esac
+                                       ;;
+                                    esac
+                                    ;;
+                     service) case "$#" in
+                                 1) case $1 in
+                                       ok)       execLQL "GET services\nColumns: host_name service_description state\nFilter: state = 0\n" || errorAction $action "failed to execute $command" ;;
+                                       warning)  execLQL "GET services\nColumns: host_name service_description state\nFilter: state = 1\n" || errorAction $action "failed to execute $command" ;;
+                                       critical) execLQL "GET services\nColumns: host_name service_description state\nFilter: state = 2\n" || errorAction $action "failed to execute $command" ;;
+                                       unknown)  execLQL "GET services\nColumns: host_name service_description state\nFilter: state = 3\n" || errorAction $action "failed to execute $command" ;;
+                                    esac
+                                    ;;
+                                 *) errorAction $action "invalid query service specification"
+                                    ;;
+                              esac
+                              ;;
+                     *) case "$#" in
+                           0) # host or service
+                              $NAGIOSQ --format $format -H $object
+                              $NAGIOSQ --format $format -S $object
+                              ;;
+                           1) # service host
+                              $NAGIOSQ --format $format -S $object -H $1
+                              ;;
+                        esac
+                        ;;
+                     esac
+                  fi
+                  ;;
+                     
+     disable|enable) if [ $# -eq 0 ]; then
+                        errorAction "$action" "invalid number of arguments"
+                     else
+                        object=$1
+                        shift
+                        case "$object" in
+                           notification ) case "$#" in
+                                             0) errorAction $action "invalid disable notification specification"
+                                                ;;
+                                             1) case $1 in 
+                                                   all) [ $action == "enable" ] && command="ENABLE_NOTIFICATIONS" || command="DISABLE_NOTIFICATIONS"
+                                                        execCMD "$command" || errorAction $action "failed to execute $command"
+                                                        ;;
+                                                   *)   # this could be a servicegroup or a host
+                                                        _servicegroup=$(execLQL "GET servicegroups\nColumns: name\nFilter: name = $1\n")
+                                                        if [ -z "$_servicegroup" ]; then
+                                                           # no servicegroup with given name exists, so it has to be a host (which may not exist either)
+                                                           _host=$(execLQL  "GET hosts\nColumns: host_name\nFilter: host_name = $1\n")
+                                                           if [ -z "$_host" ]; then
+                                                              errorAction $action "host or servicegroup not found"
+                                                           else
+                                                              _services=$(execLQL "GET services\nColumns: service_description\nFilter: host_name = $1\n")
+                                                              case "$action" in
+                                                                 enable)  command1="ENABLE_HOST_NOTIFICATIONS"
+                                                                          command2="ENABLE_SVC_NOTIFICATIONS"
+                                                                          command3="ENABLE_SVC_EVENT_HANDLER"
+                                                                          ;;
+                                                                 disable) command1="DISABLE_HOST_NOTIFICATIONS"
+                                                                          command2="DISABLE_SVC_NOTIFICATIONS"
+                                                                          command3="DISABLE_SVC_EVENT_HANDLER"
+                                                                          ;;
+                                                              esac
+                                                              execCMD $command1 $_host || errorAction $action "failed to execute $command on $host"
+                                                              if [ ! -z "$_services" ]; then
+                                                                 for _service in $_services; do
+                                                                    execCMD $command2 $_host $_service && execCMD $command3 $_host $_service || errorAction $action "failed to $action notification for service $_service"
+                                                                 done
+                                                              fi
+                                                            fi
+                                                         else 
+                                                            case "$action" in
+                                                                 enable)  command1="ENABLE_SERVICEGROUP_SVC_NOTIFICATIONS"
+                                                                          command2="ENABLE_SVC_EVENT_HANDLER"
+                                                                          ;;
+                                                                 disable) command1="DISABLE_SERVICEGROUP_SVC_NOTIFICATIONS"
+                                                                          command2="DISABLE_SVC_EVENT_HANDLER"
+                                                                          ;;
+                                                            esac
+                                                            execCMD $command1 $_servicegroup || errorAction $action "$command on $_servicegroup failed"
+                                                            members=$(execLQL "GET servicegroups\nColumns: members\nFilter: name = $_servicegroup\n" | tr , ' ' )
+                                                            for _member in $members; do
+                                                                hostname="${_member%%|$_servicegroup}"
+                                                                execCMD $command2 $hostname $_servicegroup || errorAction $action "failed to disable servicegroup $_servicegroup"
+                                                            done
+                                                         fi
+                                                esac
+                                                ;;
+                                             2) service=$1
+                                                host=$2
+                                                _servicehost=$(execLQL "GET services\nColumns: host_name service_description\nFilter: host_name = $host\nFilter: service_description = $service\n")
+                                                [ -z "$_servicehost" ] && errorAction $action "non-existent service host combination"
+                                                [ $action == "enable" ] && command="ENABLE_SVC_NOTIFICATIONS" || command="DISABLE_SVC_NOTIFICATIONS"
+                                                [ $action == "enable" ] && command3="ENABLE_SVC_EVENT_HANDLER" || command3="DISABLE_SVC_EVENT_HANDLER"
+                                                execCMD $command $host $service || errorAction $action "failed"
+                                                execCMD $command3 $host $service || errorAction $action "failed"
+                                                ;;
+                                          esac
+                                          ;;
+                           *) errorAction $action "invalid disable specification"
+                              ;;
+                        esac
+                     fi
+                     ;;                     
+     *) errorAction $action "invalid action $action"
+        exit 1
+        ;;
+   esac
+
