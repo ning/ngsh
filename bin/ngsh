@@ -105,7 +105,6 @@ $ME: usage: $ME [<options>] <action> [<args>]
              reap: reaps zombie nagios plugin processes
      <args>: notification: prints the status of notifications (system-wide)
              notification disabled: prints status of service,host pairs notifications
-See https://home.ninginc.com/display/OPS/Nagios+Shell for detailed information.
 End-of-Usage
    }
    
