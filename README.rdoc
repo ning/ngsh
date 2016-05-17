@@ -44,26 +44,26 @@ There is currently no configuration file for ngsh. Edit ngsh and ngsq to specify
 
 == Status
 
-root@nagios:~# ngsh status
-STATE STIME FMRI
-online 22:50:08 svc:/application/monitoring/nagios:default
+  root@nagios:~# ngsh status
+  STATE STIME FMRI
+  online 22:50:08 svc:/application/monitoring/nagios:default
 
 == Finding Hosts and/or Services
 
-root@nagios:~# ngsh find snap
-host:snap0.example.com
-host:snapmirror0.example.com
-service:service/snapbaby/client:daily
-service:service/snapbaby/client:hourly
-service:snapmirror
+  root@nagios:~# ngsh find snap
+  host:snap0.example.com
+  host:snapmirror0.example.com
+  service:service/snapbaby/client:daily
+  service:service/snapbaby/client:hourly
+  service:snapmirror
 
 == Query
 
-root@nagios:~# ngsh query filerstats
-subzero0.example.com;0;OK;1
-subzero1.example.com;0;OK;1
-subzero2.example.com;0;OK;1
-subzero3.example.com;0;OK;1
+  root@nagios:~# ngsh query filerstats
+  subzero0.example.com;0;OK;1
+  subzero1.example.com;0;OK;1
+  subzero2.example.com;0;OK;1
+  subzero3.example.com;0;OK;1
 
-root@nagios:~# ngsh query service critical
-hadoop0;hadoop/worker;2
+  root@nagios:~# ngsh query service critical
+  hadoop0;hadoop/worker;2
